@@ -442,6 +442,7 @@ bool TryMAPInitialization(boost::shared_ptr<std::list<Estimator::LidarFrame>> fr
 
     //############# world to gravity vector transform matrix;
     ceres::Manifold *quatParam = new ceres::QuaternionManifold();
+    // ceres::LocalParameterization *quatParam = new ceres::QuaternionParameterization();
     ceres::Problem problem_quat;
 
     problem_quat.AddParameterBlock(para_quat, 4, quatParam);
@@ -1432,15 +1433,15 @@ int main(int argc, char** argv)
     if(!IMU_MAP_init) LidarIMUInited = false;
 
 
-    std::cout << filter_parameter_corner << " " << filter_parameter_surf << " "  << hori_rotate_th<< " "
+    std::cout << "Parameters: "<< filter_parameter_corner << " " << filter_parameter_surf << " "  << hori_rotate_th<< " "
             << velo_rotate_th << " " << IMU_Mode <<  " " << Hori_IMU_Mode << " " << IMU_MAP_init <<std::endl;
     // set extrinsic matrix between lidar & IMU
     std::vector<double> vecTlb;
     if(!ros::param::get("~Extrinsic_Tlb",vecTlb )){
-        vecTlb =  {1.0, 0.0, 0.0, -0.05512,
-                    0.0, 1.0, 0.0, -0.02226,
-                    0.0, 0.0, 1.0,  0.0297,
-                    0.0, 0.0, 0.0,  1.0};
+        vecTlb =  {0.9999161, 0.0026676,  0.0126707, -0.011,
+                   -0.0025826, 0.9999741, -0.0067201, -0.0234,
+                   -0.0126883, 0.0066868,  0.9998971,   0.044,
+                   0.0,       0.0,        0.0,      1.0};
         ROS_WARN_STREAM("Extrinsic_Tlb unavailable ! Using default param");
     }
 

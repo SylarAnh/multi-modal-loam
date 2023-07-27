@@ -1,10 +1,12 @@
-cmake_minimum_required(VERSION 2.8.3)
+cmake_minimum_required(VERSION 3.0.2)
 project(mm_loam)
 
-SET(CMAKE_BUILD_TYPE "Release")
+SET(CMAKE_BUILD_TYPE "Debug")
 set(CMAKE_CXX_FLAGS "-std=c++17")
 
 SET(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
+SET(PYTHON_EXECUTABLE /usr/bin/python3)
+
 
 find_package(catkin REQUIRED COMPONENTS
   	     message_generation
@@ -38,14 +40,17 @@ add_message_files(
 
 include_directories(
 		include
+		/home/jcwang/code/ws_multi_modal/devel/include
 		${catkin_INCLUDE_DIRS}
 		${EIGEN3_INCLUDE_DIR}
 		${PCL_INCLUDE_DIRS}
 		${CERES_INCLUDE_DIRS}
 		${OpenCV_INCLUDE_DIRS}
 		${SUITESPARSE_INCLUDE_DIRS}
-	)
-
+)
+link_directories(
+		include
+)
 generate_messages(DEPENDENCIES std_msgs nav_msgs sensor_msgs livox_ros_driver)
 catkin_package(CATKIN_DEPENDS geometry_msgs nav_msgs roscpp rospy std_msgs message_runtime livox_ros_driver
   	       pcl_conversions pcl_ros message_filters std_srvs tf_conversions tf
@@ -63,6 +68,6 @@ add_executable (mm_PoseEstimation
 	src/lio/IMUIntegrator.cpp
 	src/lio/ceresfunc.cpp
 	src/lio/Map_Manager.cpp)
-add_dependencies(mm_PoseEstimation ${catkin_EXPORTED_TARGETS}  ${PROJECT_NAME}_generate_messages_cpp)
+add_dependencies(mm_PoseEstimation ${PROJECT_NAME}_generate_messages_cpp ${catkin_EXPORTED_TARGETS})
 target_link_libraries(mm_PoseEstimation ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBS} ${CERES_LIBRARIES})
 

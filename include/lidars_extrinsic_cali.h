@@ -564,8 +564,8 @@ pcl::PointCloud<PointType>::Ptr target_cloud, Eigen::Matrix4f &tf_marix, bool sa
     t2 = std::chrono::steady_clock::now();
     time_span = std::chrono::duration_cast<std::chrono::duration<double, std::ratio<1, 1000>>>(t2 - t1);
     // std::cout << "PCL gicp.align Time: " << time_span.count() << " ms."<< std::endl;
-    std::cout << "====>>>>> has converged: " << gicp.hasConverged() << " ====>>>>> score: " <<
-        gicp.getFitnessScore() << std::endl; 
+//    std::cout << "====>>>>> has converged: " << gicp.hasConverged() << " ====>>>>> score: " <<
+//        gicp.getFitnessScore() << std::endl;
 
     auto transformation_matrix =  gicp.getFinalTransformation ();
     std::cout << "transformation_matrix:\n"<<transformation_matrix << std::endl;

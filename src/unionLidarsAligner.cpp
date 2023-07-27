@@ -27,6 +27,7 @@
 #include "livox_ros_driver/CustomMsg.h"
 #include "lidars_extrinsic_cali.h"
 #include "mm_loam/union_cloud.h"
+#include "preprocess.h"
 
 #include <fstream>
 #include <chrono>
@@ -46,6 +47,7 @@ class LidarsParamEstimator{
         // subscribe raw data
         ros::Subscriber sub_hori;
         ros::Subscriber sub_velo;
+        ros::Subscriber sub_ouster;
         ros::Subscriber sub_imu;
 
         // publish points shared FOV with Horizon
@@ -74,7 +76,8 @@ class LidarsParamEstimator{
         // real time angular yaw speed
         double                      _yaw_velocity;
 
-        pcl::PointCloud<PointType> _velo_new_cloud ;
+        pcl::PointCloud<PointType> _velo_new_cloud;
+        pcl::PointCloud<PointType> _ouster_new_cloud;
 
         // raw message queue for time_offset
         // std::queue< sensor_msgs::PointCloud2 >          _velo_queue;
@@ -125,6 +128,7 @@ class LidarsParamEstimator{
         LidarsParamEstimator()
         {
             sub_velo = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_points", 1000, &LidarsParamEstimator::velo_cloud_handler, this);
+            sub_ouster = nh.subscribe<sensor_msgs::PointCloud2>("/ouster/points", 1000, &LidarsParamEstimator::ouster_cloud_handler, this);
             sub_hori = nh.subscribe<livox_ros_driver::CustomMsg>("/livox/lidar", 100, &LidarsParamEstimator::hori_cloud_handler, this);
             sub_imu  = nh.subscribe("/livox/imu", 2000,  &LidarsParamEstimator::imu_handler, this);
             pub_hori        = nh.advertise<sensor_msgs::PointCloud2>("/a_horizon", 1);
@@ -141,15 +145,15 @@ class LidarsParamEstimator{
             // Get parameters
             ros::NodeHandle private_nh_("~");
             if (!private_nh_.getParam("enable_extrinsic_estimation",  en_extrinsic_esti))       en_extrinsic_esti = true;
-            if (!private_nh_.getParam("enable_timeoffset_estimation", en_timeoffset_esti))      en_timeoffset_esti = true;
+            if (!private_nh_.getParam("enable_timeoffset_estimation", en_timeoffset_esti))      en_timeoffset_esti = false;
             if (!private_nh_.getParam("extri_esti_hori_integ_frames", _hori_itegrate_frames))    _hori_itegrate_frames = 1;
-            if (!private_nh_.getParam("time_esti_error_threshold",    _time_esti_error_th))     _time_esti_error_th = 500.0;
             if (!private_nh_.getParam("give_extrinsic_Velo_to_Hori",  _use_given_extrinsic_lidars))   _use_given_extrinsic_lidars = false;
-            if (!private_nh_.getParam("time_esti_start_yaw_velocity", _time_start_yaw_velocity))     _time_start_yaw_velocity = 0.5;
+            if (!private_nh_.getParam("time_esti_error_threshold",    _time_esti_error_th))     _time_esti_error_th = 35000.0;
+            if (!private_nh_.getParam("time_esti_start_yaw_velocity", _time_start_yaw_velocity))     _time_start_yaw_velocity = 0.6;
             if (!private_nh_.getParam("give_timeoffset_Velo_to_Hori", _use_given_timeoffset))        _use_given_timeoffset = false;
-            if (!private_nh_.getParam("timeoffset_Velo_to_Hori",      given_timeoffset))            given_timeoffset = 0.0;
-            if (!private_nh_.getParam("timeoffset_search_resolution", _offset_search_resolution))    _offset_search_resolution = 30;
-            if (!private_nh_.getParam("timeoffset_search_sliced_points", _offset_search_sliced_points)) _offset_search_sliced_points = 12000;
+            if (!private_nh_.getParam("timeoffset_Velo_to_Hori",      given_timeoffset))            given_timeoffset = 0.070;
+            if (!private_nh_.getParam("timeoffset_search_resolution", _offset_search_resolution))    _offset_search_resolution = 10;
+            if (!private_nh_.getParam("timeoffset_search_sliced_points", _offset_search_sliced_points)) _offset_search_sliced_points = 24000;
 
             if (!private_nh_.getParam("cut_raw_Hori_message_pieces", _cut_raw_message_pieces)) _cut_raw_message_pieces = 1;
 
@@ -506,10 +510,10 @@ class LidarsParamEstimator{
             // ****************************************
             velo_fovs_cloud += undistort_cloud;
 
-            std::unique_lock<std::mutex> lock_velo(_mutexVeloQueue);
+            std::unique_lock<std::mutex> lock_ouster(_mutexVeloQueue);
             _velo_queue.push_back(*pointCloudIn);
             _velo_fov_queue.push(velo_fovs_cloud);
-            lock_velo.unlock();
+            lock_ouster.unlock();
             if( (_hori_tf_initd || _use_given_extrinsic_lidars) && _time_offset_initd && en_timeoffset_esti)
             {
                 //#### substtract time-offset to get the livox based timestamp
@@ -520,7 +524,7 @@ class LidarsParamEstimator{
                 if(pub_horipoints_given_stamp( _velo_queue.front().header.stamp.toNSec() - _time_offset, livox_aligned_msg))
                 {
                     // Publish velodyne restamped message
-                    std::unique_lock<std::mutex> lock_velo(_mutexVeloQueue);
+                    std::unique_lock<std::mutex> lock_ouster(_mutexVeloQueue);
                     ros::Time v_stamp;
                     v_stamp.fromNSec(_velo_queue.front().header.stamp.toNSec() - _time_offset);
                     pcl::PointCloud<PointType>  v_cloud;
@@ -542,7 +546,7 @@ class LidarsParamEstimator{
 
                     _velo_queue.erase(_velo_queue.begin());
                     _velo_fov_queue.pop();
-                    lock_velo.unlock();
+                    lock_ouster.unlock();
 
                 }else{
                     ROS_WARN_STREAM("Publishing aligned horipoints failed! ");
@@ -612,6 +616,188 @@ class LidarsParamEstimator{
         }
 
         /**
+         * @brief Subscribe pointcloud from Velodyne
+         * - save the first timestamp of first message to init the timestamp
+         * - undistort pointcloud based on rotation from IMU
+         * - select Velo points in same FOV with Hori
+         * -
+         * @param pointCloudIn
+         */
+        void ouster_cloud_handler(const sensor_msgs::PointCloud2ConstPtr& pointCloudIn)
+        {
+
+            if(!_first_velo_reveived) _first_velo_reveived = true;
+
+            pcl::PointCloud<PointType>  full_cloud_in;
+            pcl::fromROSMsg(*pointCloudIn, full_cloud_in);
+
+
+            // ################ select Velo points in same FOV with Hori #################
+            int cloudSize = full_cloud_in.points.size();
+            pcl::PointCloud<pcl::PointXYZI> ouster_fovs_cloud;
+            float startOri = -atan2(full_cloud_in.points[0].y, full_cloud_in.points[0].x);
+            float endOri = -atan2(full_cloud_in.points[cloudSize - 1].y,
+                    full_cloud_in.points[cloudSize - 1].x) +
+                    2 * M_PI;
+
+            if (endOri - startOri > 3 * M_PI)
+                endOri -= 2 * M_PI;
+            else if (endOri - startOri < M_PI)
+                endOri += 2 * M_PI;
+
+            // ROS_INFO_STREAM("Velodyne Lidar start angle: " <<  startOri << " | end angle : " << endOri << " | range: " << endOri - startOri);
+
+            pcl::PointCloud<PointType> undistort_cloud;
+            pcl::PointXYZI  point;
+            bool halfPassed = false;
+            for (int i = 0; i < cloudSize; i++)
+            {
+                point.x = full_cloud_in.points[i].x;
+                point.y = full_cloud_in.points[i].y;
+                point.z = full_cloud_in.points[i].z;
+
+                float ori = -atan2(point.y, point.x);
+                if (!halfPassed)
+                {
+                    if (ori < startOri - M_PI / 2)
+                        ori += 2 * M_PI;
+                    else if (ori > startOri + M_PI * 3 / 2)
+                        ori -= 2 * M_PI;
+
+                    if (ori - startOri > M_PI)
+                        halfPassed = true;
+                }
+                else {
+                    ori += 2 * M_PI;
+                    if (ori < endOri - M_PI * 3 / 2)
+                        ori += 2 * M_PI;
+                    else if (ori > endOri + M_PI / 2)
+                        ori -= 2 * M_PI;
+                }
+
+                float relTime = (ori - startOri) / (endOri - startOri);
+                point.intensity = relTime;
+
+                // 不需要判断是否在水平视场内
+                // if( ( ori > -0.7608 && ori < 0.7158 ) ||
+                //     ori > -0.7608+ 2*M_PI && ori < 0.7158 +2*M_PI)
+                {
+                    // velo_fovs_cloud.push_back(point);
+                    undistort_cloud.push_back(point);
+                    // if(undistort_cloud.size() == 1)
+                    //     ROS_INFO_STREAM("First Points in FOV, start angle : " << ori << "  | relTime" << relTime);
+                }
+            }
+
+            // ****************************************
+            ouster_fovs_cloud += undistort_cloud;
+
+            std::unique_lock<std::mutex> lock_ouster(_mutexVeloQueue);
+            _velo_queue.push_back(*pointCloudIn);
+            _velo_fov_queue.push(ouster_fovs_cloud);
+            lock_ouster.unlock();
+            if( (_hori_tf_initd || _use_given_extrinsic_lidars) && _time_offset_initd && en_timeoffset_esti)
+            {
+                //#### substtract time-offset to get the livox based timestamp
+                // std::cout<< "\n\n ==>> Velo time: "  << std::setprecision(15) << _velo_queue.front().header.stamp.toSec()  << " | Looking for Time "
+                //             << _velo_queue.front().header.stamp.toSec() -  ros::Time().fromNSec(_time_offset).toSec() << std::endl;
+
+                livox_ros_driver::CustomMsg livox_aligned_msg;
+                if(pub_horipoints_given_stamp( _velo_queue.front().header.stamp.toNSec() - _time_offset, livox_aligned_msg))
+                {
+                    // Publish velodyne restamped message
+                    std::unique_lock<std::mutex> lock_ouster(_mutexVeloQueue);
+                    ros::Time v_stamp;
+                    v_stamp.fromNSec(_velo_queue.front().header.stamp.toNSec() - _time_offset);
+                    pcl::PointCloud<PointType>  v_cloud;
+                    pcl::fromROSMsg(_velo_queue.front(), v_cloud);
+                    pcl::transformPointCloud (v_cloud , v_cloud, _velo_hori_tf_matrix);
+
+                    sensor_msgs::PointCloud2 ouster_msg;
+                    pcl::toROSMsg(v_cloud, ouster_msg);
+                    ouster_msg.header.stamp =  v_stamp;
+                    ouster_msg.header.frame_id = "lio_world";
+                    pub_time_velo.publish(ouster_msg);
+
+                    mm_loam::union_cloud a_time_union;
+                    a_time_union.livox_time_aligned = livox_aligned_msg;
+                    a_time_union.velo_time_aligned = ouster_msg;
+                    pub_time_union_cloud.publish(a_time_union);
+
+
+
+                    _velo_queue.erase(_velo_queue.begin());
+                    _velo_fov_queue.pop();
+                    lock_ouster.unlock();
+
+                }else{
+                    ROS_WARN_STREAM("Publishing aligned horipoints failed! ");
+                }
+                return;
+            }
+
+            if(!_hori_tf_initd && en_extrinsic_esti){
+                //  std::cout << "OS0 -> base_link " << trans_vector.transpose()
+                //     << " " << rot_matrix.eulerAngles(2,1,0).transpose() << " /" << "os0_sensor"
+                //     << " /" << "livox_frame" << " 10" << std::endl;
+
+                Eigen::AngleAxisf init_rot_x( 0.0 , Eigen::Vector3f::UnitX());
+                Eigen::AngleAxisf init_rot_y( 0.0 , Eigen::Vector3f::UnitY());
+                Eigen::AngleAxisf init_rot_z( 0.0 , Eigen::Vector3f::UnitZ());
+                Eigen::Translation3f init_trans(0.0,0.0,0.0);
+                Eigen::Matrix4f init_tf = (init_trans * init_rot_z * init_rot_y * init_rot_x).matrix();
+
+                Eigen::Matrix3f rot_matrix = init_tf.block(0,0,3,3);
+                Eigen::Vector3f trans_vector = init_tf.block(0,3,3,1);
+
+                pcl::PointCloud<PointType>  out_cloud;
+                pcl::transformPointCloud (full_cloud_in , full_cloud_in, init_tf);
+
+                _ouster_new_cloud.clear();
+                _ouster_new_cloud += full_cloud_in;
+
+
+                // sensor_msgs::PointCloud2 velo_msg;
+                // pcl::toROSMsg(_ouster_new_cloud, velo_msg);
+                // // velo_msg.header.stamp = ros::Time::now();
+                // velo_msg.header.stamp = pointCloudIn->header.stamp;
+                // velo_msg.header.frame_id = "lio_world";
+                // pub_velo.publish(velo_msg);
+            }
+
+            if(_hori_tf_initd){
+
+                pcl::PointCloud<PointType>  out_cloud;
+                pcl::transformPointCloud (full_cloud_in , out_cloud, _velo_hori_tf_matrix);
+
+                _ouster_new_cloud.clear();
+                _ouster_new_cloud += full_cloud_in;
+
+                sensor_msgs::PointCloud2 ouster_msg;
+                pcl::toROSMsg(out_cloud, ouster_msg);
+                // velo_msg.header.stamp = ros::Time::now();
+                double stamp_sec = pointCloudIn->header.stamp.toSec() - 0.05;
+                ros::Time stamp(stamp_sec);
+                ouster_msg.header.stamp =  stamp;
+
+                // velo_msg.header.stamp = pointCloudIn->header.stamp;
+                ouster_msg.header.frame_id = "lio_world";
+                pub_velo.publish(ouster_msg);
+
+
+                // publish the velo in same FOV
+                pcl::PointCloud<PointType>  out_cloud2;
+                pcl::transformPointCloud (ouster_fovs_cloud , out_cloud2, _velo_hori_tf_matrix);
+                sensor_msgs::PointCloud2 ouster_fovs_cloud_msg;
+                pcl::toROSMsg(out_cloud2, ouster_fovs_cloud_msg);
+                ouster_fovs_cloud_msg.header.stamp = pointCloudIn->header.stamp;
+                ouster_fovs_cloud_msg.header.frame_id = "lio_world";
+                pub_velo_inFOV.publish(ouster_fovs_cloud_msg);
+
+            }
+        }
+
+        /**
          * @brief Subscribe imu message, check current IMU message
          * * if tf inited, and time offset is not inited, enable timeoffset estimation
          *
@@ -619,9 +805,9 @@ class LidarsParamEstimator{
         void imu_handler(const sensor_msgs::ImuConstPtr &imu_msg){
             _yaw_velocity = imu_msg->angular_velocity.z;
 
-            std::unique_lock<std::mutex> lock_velo(_mutexIMUVec);
+            std::unique_lock<std::mutex> lock_ouster(_mutexIMUVec);
             _imu_vec.push_back(imu_msg);
-            lock_velo.unlock();
+            lock_ouster.unlock();
 
             if(_time_offset_initd || en_timestamp_align){
                 transform_hori_timestamp();
@@ -655,7 +841,7 @@ class LidarsParamEstimator{
                     }
                     lock_hori.unlock();
 
-                    std::unique_lock<std::mutex> lock_velo(_mutexVeloQueue);
+                    std::unique_lock<std::mutex> lock_ouster(_mutexVeloQueue);
                     if( _velo_queue.size() > 3){
                         for(int i=_velo_queue.size(); i > 0   ; i--){
                             assert(_velo_queue.size() == _velo_fov_queue.size());
@@ -666,7 +852,7 @@ class LidarsParamEstimator{
                             _velo_fov_queue.pop();
                         }
                     }
-                    lock_velo.unlock();
+                    lock_ouster.unlock();
 
                     if(!_time_offset_initd && en_timeoffset_esti){
                         ROS_INFO_STREAM( " hori_vec size: " << hori_vec.size()
@@ -711,7 +897,7 @@ class LidarsParamEstimator{
         void get_delta_rotation(Eigen::Quaterniond &dq){
             dq.setIdentity();
             double current_time = _last_imu_time;
-            std::unique_lock<std::mutex> lock_velo(_mutexIMUVec);
+            std::unique_lock<std::mutex> lock_ouster(_mutexIMUVec);
             for(auto & imu : _imu_vec){
                 Eigen::Vector3d gyr;
                 gyr << imu->angular_velocity.x,
@@ -728,7 +914,7 @@ class LidarsParamEstimator{
                 _last_imu_time = current_time;
             }
             _imu_vec.clear();
-            lock_velo.unlock();
+            lock_ouster.unlock();
         }
 
         // transform each points in Horizon pointcloud offset time to first received timebase

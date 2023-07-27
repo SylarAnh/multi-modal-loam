@@ -26,7 +26,7 @@
 #include <pcl/registration/gicp.h>
 #include "livox_ros_driver/CustomMsg.h"
 #include "lidars_extrinsic_cali.h"
-#include "union_om/union_cloud.h"
+#include "mm_loam/union_cloud.h"
 
 #include <fstream>
 #include <chrono>
@@ -136,7 +136,7 @@ class LidarsParamEstimator{
             pub_merged_cloud = nh.advertise<sensor_msgs::PointCloud2>("/merged_cloud", 1);
             pub_time_hori_livoxmsg = nh.advertise<livox_ros_driver::CustomMsg>("/a_time_hori_livoxmsg", 1);
 
-            pub_time_union_cloud = nh.advertise<union_om::union_cloud>("/a_time_union_cloud", 1);
+            pub_time_union_cloud = nh.advertise<mm_loam::union_cloud>("/a_time_union_cloud", 1);
 
             // Get parameters
             ros::NodeHandle private_nh_("~");
@@ -358,7 +358,7 @@ class LidarsParamEstimator{
                             pub_time_velo.publish(velo_msg);
 
 
-                            union_om::union_cloud a_time_union;
+                            mm_loam::union_cloud a_time_union;
                             a_time_union.livox_time_aligned = livox_aligned_msg;
                             a_time_union.velo_time_aligned = velo_msg;
                             pub_time_union_cloud.publish(a_time_union);
@@ -533,7 +533,7 @@ class LidarsParamEstimator{
                     velo_msg.header.frame_id = "lio_world";
                     pub_time_velo.publish(velo_msg);
 
-                    union_om::union_cloud a_time_union;
+                    mm_loam::union_cloud a_time_union;
                     a_time_union.livox_time_aligned = livox_aligned_msg;
                     a_time_union.velo_time_aligned = velo_msg;
                     pub_time_union_cloud.publish(a_time_union);

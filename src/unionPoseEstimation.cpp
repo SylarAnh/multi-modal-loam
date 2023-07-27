@@ -58,9 +58,10 @@
 #include <pcl/sample_consensus/method_types.h>
 #include <pcl/sample_consensus/model_types.h>
 
-#include "union_om/union_cloud.h"
+#include "mm_loam/union_cloud.h"
 #include <chrono>
-#include <opencv/cv.h>
+// #include <opencv/cv.h>
+#include <opencv4/opencv2/opencv.hpp>
 
 
 typedef pcl::PointXYZINormal PointType;
@@ -132,7 +133,7 @@ std::mutex _mutexStereoOdomQueue;
 
 std::queue<sensor_msgs::PointCloud2ConstPtr> _horiLidarMsgQueue;
 std::queue<sensor_msgs::PointCloud2ConstPtr> _veloLidarMsgQueue;
-std::queue<union_om::union_cloudConstPtr>    _unionLidarMsgQueue;
+std::queue<mm_loam::union_cloudConstPtr>    _unionLidarMsgQueue;
 std::mutex _mutexIMUQueue;
 // std::queue<sensor_msgs::ImuConstPtr> _imuMsgQueue;
 std::vector<sensor_msgs::ImuConstPtr> _imuMsgVector;
@@ -282,7 +283,7 @@ void veloFullCallBack(const sensor_msgs::PointCloud2ConstPtr &msg){
 
 }
 
-void unionCloudHandler(const union_om::union_cloudConstPtr & msg ){
+void unionCloudHandler(const mm_loam::union_cloudConstPtr & msg ){
     std::unique_lock<std::mutex> lock(_mutexVeloLidarQueue);
     while( _unionLidarMsgQueue.size() > 2 && real_time_mode) _unionLidarMsgQueue.pop();
     _unionLidarMsgQueue.push(msg);
@@ -440,7 +441,7 @@ bool TryMAPInitialization(boost::shared_ptr<std::list<Estimator::LidarFrame>> fr
     para_quat[3] = 0;
 
     //############# world to gravity vector transform matrix;
-    ceres::LocalParameterization *quatParam = new ceres::QuaternionParameterization();
+    ceres::Manifold *quatParam = new ceres::QuaternionManifold();
     ceres::Problem problem_quat;
 
     problem_quat.AddParameterBlock(para_quat, 4, quatParam);
@@ -1474,7 +1475,7 @@ int main(int argc, char** argv)
 
     ros::Subscriber subHoriFullCloud = nodeHandler.subscribe<sensor_msgs::PointCloud2>("/hori_full_cloud", 1, horiFullCallBack);
     ros::Subscriber subVeloFullCloud = nodeHandler.subscribe<sensor_msgs::PointCloud2>("/velo_full_cloud", 1, veloFullCallBack);
-    ros::Subscriber subUnionCloud = nodeHandler.subscribe<union_om::union_cloud>("/union_feature_cloud", 1, unionCloudHandler);
+    ros::Subscriber subUnionCloud = nodeHandler.subscribe<mm_loam::union_cloud>("/union_feature_cloud", 1, unionCloudHandler);
 
     ros::Subscriber sub_imu;
 

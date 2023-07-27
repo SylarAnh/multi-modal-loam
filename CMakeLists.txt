@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 2.8.3)
 project(mm_loam)
 
 SET(CMAKE_BUILD_TYPE "Release")
-set(CMAKE_CXX_FLAGS "-std=c++11")
+set(CMAKE_CXX_FLAGS "-std=c++17")
 
 SET(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 
@@ -63,5 +63,6 @@ add_executable (mm_PoseEstimation
 	src/lio/IMUIntegrator.cpp
 	src/lio/ceresfunc.cpp
 	src/lio/Map_Manager.cpp)
+add_dependencies(mm_PoseEstimation ${catkin_EXPORTED_TARGETS}  ${PROJECT_NAME}_generate_messages_cpp)
 target_link_libraries(mm_PoseEstimation ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBS} ${CERES_LIBRARIES})
 

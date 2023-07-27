@@ -38,7 +38,8 @@
 #include <thread>
 #include <mutex>
 
-#include <opencv/cv.h>
+// #include <opencv/cv.h>
+#include <opencv4/opencv2/opencv.hpp>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/filters/filter.h>
@@ -62,7 +63,7 @@
 #include <eigen3/Eigen/Core>
 #include <Eigen/Dense>
 
-#include "union_om/union_cloud.h"
+#include "mm_loam/union_cloud.h"
 
 
 struct ExtractedFeatures{
@@ -197,7 +198,7 @@ private:
 
     int _extrin_recali_times = 30;
     int _extrin_cnt = 0;
-    union_om::union_cloud union_msg;
+    mm_loam::union_cloud union_msg;
     Eigen::Matrix4f extri_mtx = Eigen::Matrix4f::Identity();
     // Preprocess p_pre;
 
@@ -213,7 +214,7 @@ public:
         subHoriCloud = nh.subscribe<livox_ros_driver::CustomMsg>("/a_horizon_livoxmsg", 100, &feature_extraction::horiCloudHandler, this);
         subVeloCloud = nh.subscribe<sensor_msgs::PointCloud2>("/a_velo", 100, &feature_extraction::veloCloudHandler, this);
         // subHesaCloud = nh.subscribe<sensor_msgs::PointCloud2>("/hesai/pandar", 100, &feature_extraction::hesaiCloudHandler, this);
-        subUnionCloud = nh.subscribe<union_om::union_cloud>("/a_time_union_cloud", 2, &feature_extraction::unionCloudHandler, this);
+        subUnionCloud = nh.subscribe<mm_loam::union_cloud>("/a_time_union_cloud", 2, &feature_extraction::unionCloudHandler, this);
 
         pubHoriCloud = nh.advertise<sensor_msgs::PointCloud2> ("/hori_cloud", 20);
         pubHoriSharp = nh.advertise<sensor_msgs::PointCloud2> ("/hori_cloud_sharp", 20);
@@ -228,7 +229,7 @@ public:
         pubMergedCloud = nh.advertise<sensor_msgs::PointCloud2> ("/merged_cloud", 20);
         pubMergedFeature = nh.advertise<sensor_msgs::PointCloud2> ("/merged_feature_cloud", 20);
 
-        pubUnionFeatureCloud = nh.advertise<union_om::union_cloud> ("/union_feature_cloud", 20);
+        pubUnionFeatureCloud = nh.advertise<mm_loam::union_cloud> ("/union_feature_cloud", 20);
         // Get parameters
         ros::NodeHandle private_nh_("~");
         if (!private_nh_.getParam("hori_feature_num_threshold",   _hori_lowfeature_th))  _hori_lowfeature_th = 200;
@@ -263,7 +264,7 @@ public:
 
     ~feature_extraction(){}
 
-    void unionCloudHandler(const union_om::union_cloudConstPtr & msg ){
+    void unionCloudHandler(const mm_loam::union_cloudConstPtr & msg ){
         // livox_ros_driver::CustomMsg livo_msg = msg->livox_time_aligned;
         // sensor_msgs::PointCloud2    velo_msg = msg->velo_time_aligned;
 

@@ -933,7 +933,7 @@ void process(){
                 laserCloudMsg.header.stamp.fromSec(velo_list->front().timeStamp);
                 pubVeloCornerMap.publish(laserCloudMsg);
                 // if(!surfCloudPtr->empty())
-                //     pcl::io::savePCDFileASCII ("/home/qing/velo_surf.pcd", *surfCloudPtr);
+                //     pcl::io::savePCDFileASCII ("/home/jcwang/dataset/velo_surf.pcd", *surfCloudPtr);
                 ROS_INFO_STREAM("[VELO ]: Publish Surf & Corner Map ");
 
                 // if tightly coupled IMU message, start IMU initialization
@@ -1254,7 +1254,7 @@ void process(){
                 laserCloudMsg.header.stamp.fromSec(hori_lidar_list->front().timeStamp);
                 pubHoriSurfMap.publish(laserCloudMsg);
                 // if(!surfCloudPtr->empty())
-                //     pcl::io::savePCDFileASCII ("/home/qing/hori_surf.pcd", *surfCloudPtr);
+                //     pcl::io::savePCDFileASCII ("/home/jcwang/dataset/hori_surf.pcd", *surfCloudPtr);
                 ROS_INFO_STREAM("[HORI ]: Publish Surf Map\n\n");
 
                 // if tightly coupled IMU message, start IMU initialization

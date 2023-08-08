@@ -374,7 +374,7 @@ class LidarsCalibrater{
                     pointout.b = 255;
                     (*cloudALL)[i+cloudSrc->size()] = pointout;
                 } 
-                pcl::io::savePCDFile<pcl::PointXYZRGB> ("/home/qing/icp_ICP.pcd", *cloudALL);
+                pcl::io::savePCDFile<pcl::PointXYZRGB> ("/home/jcwang/dataset/icp_ICP.pcd", *cloudALL);
             }
         } 
 };
@@ -531,6 +531,7 @@ pcl::PointCloud<PointType>::Ptr target_cloud, Eigen::Matrix4f &tf_marix, bool sa
     vox.setInputCloud (cloudin_filtered);
     vox.setLeafSize (0.05f, 0.05f, 0.05f);
     vox.filter(*ds_cloud_in);
+//    *ds_cloud_in = *cloudin_filtered;
     // std::cout << "Source DS: " << source_cloud->size() << " ->  " << ds_cloud_in->size()<< std::endl;
 
     // Create the filtering object 
@@ -551,7 +552,7 @@ pcl::PointCloud<PointType>::Ptr target_cloud, Eigen::Matrix4f &tf_marix, bool sa
     std::cout << "GICP start  .... " << ds_cloud_in->size() << " to "<< ds_cloud_out->size()<< std::endl;
     pcl::GeneralizedIterativeClosestPoint<pcl::PointXYZI, pcl::PointXYZI> gicp;
     gicp.setTransformationEpsilon(0.001);
-    gicp.setMaxCorrespondenceDistance(2);
+    gicp.setMaxCorrespondenceDistance(0.5);
     gicp.setMaximumIterations(500);
     gicp.setRANSACIterations(12);  
     gicp.setInputSource(dstf_cloud_in);
@@ -564,8 +565,8 @@ pcl::PointCloud<PointType>::Ptr target_cloud, Eigen::Matrix4f &tf_marix, bool sa
     t2 = std::chrono::steady_clock::now();
     time_span = std::chrono::duration_cast<std::chrono::duration<double, std::ratio<1, 1000>>>(t2 - t1);
     // std::cout << "PCL gicp.align Time: " << time_span.count() << " ms."<< std::endl;
-//    std::cout << "====>>>>> has converged: " << gicp.hasConverged() << " ====>>>>> score: " <<
-//        gicp.getFitnessScore() << std::endl;
+    std::cout << "====>>>>> has converged: " << gicp.hasConverged() << " ====>>>>> score: " <<
+        gicp.getFitnessScore() << std::endl;
 
     auto transformation_matrix =  gicp.getFinalTransformation ();
     std::cout << "transformation_matrix:\n"<<transformation_matrix << std::endl;
@@ -613,7 +614,7 @@ pcl::PointCloud<PointType>::Ptr target_cloud, Eigen::Matrix4f &tf_marix, bool sa
             pointout.b = 255;
             (*cloudALL)[i+cloudSrc->size()] = pointout;
         } 
-        pcl::io::savePCDFile<pcl::PointXYZRGB> ("/home/qing/icp_ICP.pcd", *cloudALL);
+        pcl::io::savePCDFile<pcl::PointXYZRGB> ("/home/jcwang/dataset/icp_ICP.pcd", *cloudALL);
     }
 } 
 

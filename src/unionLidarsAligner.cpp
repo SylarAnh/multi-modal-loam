@@ -38,6 +38,11 @@
 
 #include "sophus/so3.hpp"
 
+// #define BACKWARD_HAS_DW 1
+// #include "backward.hpp"
+// namespace backward {
+// backward::SignalHandling sh;
+// }
 typedef uint64_t uint64;
 typedef pcl::PointXYZINormal PointNormal;
 
@@ -69,6 +74,7 @@ class LidarsParamEstimator{
         int                         _hori_itegrate_frames = 5;
         pcl::PointCloud<PointType>  _hori_igcloud;
         Eigen::Matrix4f             _velo_hori_tf_matrix;
+        Eigen::Matrix4f             _mid_ouster_tf_init;
         bool                        _hori_tf_initd         = false;
         bool                        _first_velo_reveived= false;
         int                         _cut_raw_message_pieces = 2;
@@ -179,6 +185,23 @@ class LidarsParamEstimator{
                 ROS_INFO_STREAM("Reveived transformation_matrix Velo-> Hori: \n" << _velo_hori_tf_matrix );
             }
 
+            std::vector<double> vecL2OExtri;
+            if(!ros::param::get("mm_PoseEstimation/Extrinsic_TL2O",vecL2OExtri )){
+                vecL2OExtri = {   0.610757,    0.617591,    0.494619,    0.379304,
+                                  -0.711285,    0.702689, 0.000909145,  0.00639679,
+                                  -0.347503,   -0.352872,    0.869084,   -0.210844,
+                                  0,           0,           0,           1};
+//                vecL2OExtri = {0.612,    0.612,    0.5,   0.438764,
+//                               -0.707,   0.707,    -0.0,  -0.00214631,
+//                               -0.354,  -0.354,    0.866, -0.284739,
+//                               0.0,      0.0,      0.0,   1.0};
+                ROS_WARN_STREAM("Extrinsic_Tlb unavailable ! Using default param");
+            }
+            _mid_ouster_tf_init <<    vecL2OExtri[0], vecL2OExtri[1], vecL2OExtri[2], vecL2OExtri[3],
+                    vecL2OExtri[4], vecL2OExtri[5], vecL2OExtri[6], vecL2OExtri[7],
+                    vecL2OExtri[8], vecL2OExtri[9], vecL2OExtri[10], vecL2OExtri[11],
+                    vecL2OExtri[12], vecL2OExtri[13], vecL2OExtri[14], vecL2OExtri[15];
+            ROS_WARN_STREAM("Reveived transformation_matrix mid -> ouster: \n" << _mid_ouster_tf_init );
             if(_use_given_timeoffset)
             {
                 ROS_INFO_STREAM("Given time offset " << given_timeoffset);
@@ -245,10 +268,16 @@ class LidarsParamEstimator{
                     Eigen::Matrix4f hori_tf_matrix;
                     // pcl::transformPointCloud (full_cloud , cloud_out, transformation_matrix);
                     ROS_INFO("\n\n\n  Calibrate Horizon ...");
-                    calibratePCLICP(_hori_igcloud.makeShared(), _velo_new_cloud.makeShared(), hori_tf_matrix, true);
+
+                    pcl::PointCloud<PointType> hori_temp;
+                    pcl::transformPointCloud (_hori_igcloud, hori_temp, _mid_ouster_tf_init);
+
+                    calibratePCLICP(hori_temp.makeShared(), _ouster_new_cloud.makeShared(), hori_tf_matrix, true);
                     // Eigen::Matrix3f rot_matrix = hori_tf_matrix.block(0,0,3,3);
                     // Eigen::Vector3f trans_vector = hori_tf_matrix.block(0,3,3,1);
 
+                    hori_tf_matrix = hori_tf_matrix * _mid_ouster_tf_init;
+                    ROS_WARN_STREAM("transformation_matrix Hori-> Velo: \n"<< hori_tf_matrix);
                     std::cout << "transformation_matrix Hori-> Velo: \n"<<hori_tf_matrix << std::endl;
                     Eigen::Matrix3f rot_matrix = hori_tf_matrix.block(0,0,3,3);
                     Eigen::Vector3f trans_vector = hori_tf_matrix.block(0,3,3,1);
@@ -284,40 +313,6 @@ class LidarsParamEstimator{
                     hori_msg.header.stamp = stamp ;
                     hori_msg.header.frame_id = "lio_world";
                     pub_hori.publish(hori_msg);
-
-                    // livox_msg_in_distort
-                    // livox_ros_driver::CustomMsg livox_msg_pieces;
-                    // livox_msg_pieces.header = livox_msg_in_distort.header;
-                    // livox_msg_pieces.header.frame_id = "lio_world";
-                    // livox_msg_pieces.lidar_id = 0;
-                    // livox_msg_pieces.point_num = livox_msg_pieces.points.size();
-                    // livox_msg_pieces.timebase = interpo_stamp.toNSec();
-
-                    // for (int i = 1; i < _cut_raw_message_pieces; i++ )
-                    // {
-                    //     int raw_points_num =  livox_msg_in_distort.point_num;
-
-                    //     // new message
-                    //     livox_ros_driver::CustomMsg         livox_msg_pieces;
-                    //     livox_msg_pieces.point_num = raw_points_num / _cut_raw_message_pieces;
-                    //     livox_msg_pieces.timebase  = livox_msg_in_distort.timebase +
-                    //                     livox_msg_in_distort.points[raw_points_num * (i-1) / _cut_raw_message_pieces].offset_time;
-                    //     for (  int j = 0;
-                    //             j < raw_points_num * i / _cut_raw_message_pieces  &&
-                    //             j > raw_points_num * (i-1) / _cut_raw_message_pieces;
-                    //             ++j)
-                    //     {
-                    //         livox_ros_driver::CustomPoint pt;
-                    //         pt.x = livox_msg_in_distort.points[j].x;
-                    //         pt.y = livox_msg_in_distort.points[j].y;
-                    //         pt.z = livox_msg_in_distort.points[j].z;
-                    //         pt.offset_time = livox_msg_in_distort.points[j].offset_time - livox_msg_in_distort.points[j];
-                    //         pt.reflectivity =  livox_msg_in_distort.points[j].reflectivity;
-                    //         // pt.intensity = livox_msg_in.timebase + livox_msg_in.points[i].offset_time;
-                    //         out_cloud.push_back(pt);
-                    //     }
-                    //     pub_hori_livoxmsg;
-                    // }
 
                     int raw_pts_num   =  livox_msg_in_distort.point_num;
                     int piece_pts_num = raw_pts_num / _cut_raw_message_pieces;
@@ -679,8 +674,8 @@ class LidarsParamEstimator{
                 point.intensity = relTime;
 
                 // 不需要判断是否在水平视场内
-                // if( ( ori > -0.7608 && ori < 0.7158 ) ||
-                //     ori > -0.7608+ 2*M_PI && ori < 0.7158 +2*M_PI)
+                 if( ( ori > -2.356 && ori < 2.356 ) ||
+                     ori > -2.356 + 2*M_PI && ori < 2.356 +2*M_PI)
                 {
                     // velo_fovs_cloud.push_back(point);
                     undistort_cloud.push_back(point);
@@ -723,8 +718,6 @@ class LidarsParamEstimator{
                     a_time_union.livox_time_aligned = livox_aligned_msg;
                     a_time_union.velo_time_aligned = ouster_msg;
                     pub_time_union_cloud.publish(a_time_union);
-
-
 
                     _velo_queue.erase(_velo_queue.begin());
                     _velo_fov_queue.pop();

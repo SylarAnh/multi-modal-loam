@@ -59,15 +59,4 @@ catkin_package(CATKIN_DEPENDS geometry_msgs nav_msgs roscpp rospy std_msgs messa
 add_executable(mm_lidarsAligner src/unionLidarsAligner.cpp)
 target_link_libraries(mm_lidarsAligner ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBS})
 
-add_executable(mm_scanRegistration src/unionFeatureExtract.cpp)
-target_link_libraries(mm_scanRegistration ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBS})
-
-add_executable (mm_PoseEstimation
-	src/unionPoseEstimation.cpp
-	src/lio/Estimator.cpp
-	src/lio/IMUIntegrator.cpp
-	src/lio/ceresfunc.cpp
-	src/lio/Map_Manager.cpp)
-add_dependencies(mm_PoseEstimation ${PROJECT_NAME}_generate_messages_cpp ${catkin_EXPORTED_TARGETS})
-target_link_libraries(mm_PoseEstimation ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBS} ${CERES_LIBRARIES})
 

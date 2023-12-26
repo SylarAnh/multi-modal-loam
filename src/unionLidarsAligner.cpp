@@ -37,7 +37,7 @@
 #include <stdint.h>
 
 #include "sophus/so3.hpp"
-
+#define PI 3.1415926
 // #define BACKWARD_HAS_DW 1
 // #include "backward.hpp"
 // namespace backward {
@@ -50,7 +50,9 @@ class LidarsParamEstimator{
     private:
         ros::NodeHandle nh;
         // subscribe raw data
-        ros::Subscriber sub_hori;
+        ros::Subscriber sub_mid1;
+        ros::Subscriber sub_mid2;
+        ros::Subscriber sub_mid3;
         ros::Subscriber sub_velo;
         ros::Subscriber sub_ouster;
         ros::Subscriber sub_imu;
@@ -71,10 +73,18 @@ class LidarsParamEstimator{
         ros::Publisher pub_merged_cloud;
 
         // Hori TF
-        int                         _hori_itegrate_frames = 5;
+        int                         _hori_itegrate_frames = 10;
+        int                         _hori_itegrate_frames2 = 10;
+        int                         _hori_itegrate_frames3 = 10;
         pcl::PointCloud<PointType>  _hori_igcloud;
+        pcl::PointCloud<PointType>  _hori_igcloud2;
+        pcl::PointCloud<PointType>  _hori_igcloud3;
         Eigen::Matrix4f             _velo_hori_tf_matrix;
-        Eigen::Matrix4f             _mid_ouster_tf_init;
+        Eigen::Matrix4f             _mid1_ouster_tf_init;
+        Eigen::Matrix4f             _mid2_ouster_tf_init;
+        Eigen::Matrix4f             _mid3_ouster_tf_init;
+        Eigen::Matrix4f             _mid2_mid1_tf_init;
+        Eigen::Matrix4f             _mid3_mid1_tf_init;
         bool                        _hori_tf_initd         = false;
         bool                        _first_velo_reveived= false;
         int                         _cut_raw_message_pieces = 2;
@@ -90,6 +100,7 @@ class LidarsParamEstimator{
         std::vector<sensor_msgs::PointCloud2 >          _velo_queue;
         std::queue< pcl::PointCloud<pcl::PointXYZI> >   _velo_fov_queue;
         std::queue< livox_ros_driver::CustomMsg >       _hori_queue;
+        std::queue< livox_ros_driver::CustomMsg >       _hori_queue2;
         std::vector<float>                              _hori_msg_yaw_vec;
         std::vector<sensor_msgs::Imu::ConstPtr>         _imu_vec;
         std::mutex _mutexIMUVec;
@@ -97,7 +108,11 @@ class LidarsParamEstimator{
         std::mutex _mutexVeloQueue;
 
         uint64                                      _hori_start_stamp ;
+        uint64                                      _hori_start_stamp2 ;
+        uint64                                      _hori_start_stamp3 ;
         bool                                        _first_hori = true;
+        bool                                        _first_hori2 = true;
+        bool                                        _first_hori3 = true;
         std::mutex _mutexHoriPointsQueue;
         // std::queue<livox_ros_driver::CustomPoint>   _hori_points_queue;
         // std::queue<uint64>                          _hori_points_stamp_queue;
@@ -135,8 +150,10 @@ class LidarsParamEstimator{
         {
             sub_velo = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_points", 1000, &LidarsParamEstimator::velo_cloud_handler, this);
             sub_ouster = nh.subscribe<sensor_msgs::PointCloud2>("/ouster/points", 1000, &LidarsParamEstimator::ouster_cloud_handler, this);
-            sub_hori = nh.subscribe<livox_ros_driver::CustomMsg>("/livox/lidar", 100, &LidarsParamEstimator::hori_cloud_handler, this);
-            sub_imu  = nh.subscribe("/livox/imu", 2000,  &LidarsParamEstimator::imu_handler, this);
+            sub_mid1 = nh.subscribe<livox_ros_driver::CustomMsg>("/livox/lidar_192_168_1_146", 100, &LidarsParamEstimator::hori_cloud_handler, this);//前
+            sub_mid2 = nh.subscribe<livox_ros_driver::CustomMsg>("/livox/lidar_192_168_1_156", 100, &LidarsParamEstimator::hori_cloud_handler2, this);//后
+            sub_mid3 = nh.subscribe<livox_ros_driver::CustomMsg>("/livox/lidar_192_168_1_152", 100, &LidarsParamEstimator::hori_cloud_handler3, this);//中
+            sub_imu  = nh.subscribe("/livox/imu_192_168_1_152", 2000,  &LidarsParamEstimator::imu_handler, this);
             pub_hori        = nh.advertise<sensor_msgs::PointCloud2>("/a_horizon", 1);
             pub_hori_livoxmsg = nh.advertise<livox_ros_driver::CustomMsg>("/a_horizon_livoxmsg", 1);
             pub_velo        = nh.advertise<sensor_msgs::PointCloud2>("/a_velo", 1);
@@ -152,7 +169,7 @@ class LidarsParamEstimator{
             ros::NodeHandle private_nh_("~");
             if (!private_nh_.getParam("enable_extrinsic_estimation",  en_extrinsic_esti))       en_extrinsic_esti = true;
             if (!private_nh_.getParam("enable_timeoffset_estimation", en_timeoffset_esti))      en_timeoffset_esti = false;
-            if (!private_nh_.getParam("extri_esti_hori_integ_frames", _hori_itegrate_frames))    _hori_itegrate_frames = 1;
+            if (!private_nh_.getParam("extri_esti_hori_integ_frames", _hori_itegrate_frames))    _hori_itegrate_frames = 10;
             if (!private_nh_.getParam("give_extrinsic_Velo_to_Hori",  _use_given_extrinsic_lidars))   _use_given_extrinsic_lidars = false;
             if (!private_nh_.getParam("time_esti_error_threshold",    _time_esti_error_th))     _time_esti_error_th = 35000.0;
             if (!private_nh_.getParam("time_esti_start_yaw_velocity", _time_start_yaw_velocity))     _time_start_yaw_velocity = 0.6;
@@ -185,23 +202,90 @@ class LidarsParamEstimator{
                 ROS_INFO_STREAM("Reveived transformation_matrix Velo-> Hori: \n" << _velo_hori_tf_matrix );
             }
 
-            std::vector<double> vecL2OExtri;
-            if(!ros::param::get("mm_PoseEstimation/Extrinsic_TL2O",vecL2OExtri )){
-                vecL2OExtri = {   0.610757,    0.617591,    0.494619,    0.379304,
-                                  -0.711285,    0.702689, 0.000909145,  0.00639679,
-                                  -0.347503,   -0.352872,    0.869084,   -0.210844,
-                                  0,           0,           0,           1};
-//                vecL2OExtri = {0.612,    0.612,    0.5,   0.438764,
-//                               -0.707,   0.707,    -0.0,  -0.00214631,
-//                               -0.354,  -0.354,    0.866, -0.284739,
-//                               0.0,      0.0,      0.0,   1.0};
+            std::vector<double> vecL12OExtri;
+            std::vector<double> vecL22OExtri;
+            std::vector<double> vecL32OExtri;
+            if(!ros::param::get("mm_PoseEstimation/Extrinsic_TM12O",vecL12OExtri )){
+                vecL12OExtri = {0.460857, 0.455947, 0.760784, 0.223312,
+                                -0.703766, 0.71022, 0.000669762, 0.00225066,
+                                -0.540402, -0.536106, 0.648971, 0.120166,
+                                0, 0, 0, 1}; // 前mid360对ouster
+
                 ROS_WARN_STREAM("Extrinsic_Tlb unavailable ! Using default param");
             }
-            _mid_ouster_tf_init <<    vecL2OExtri[0], vecL2OExtri[1], vecL2OExtri[2], vecL2OExtri[3],
-                    vecL2OExtri[4], vecL2OExtri[5], vecL2OExtri[6], vecL2OExtri[7],
-                    vecL2OExtri[8], vecL2OExtri[9], vecL2OExtri[10], vecL2OExtri[11],
-                    vecL2OExtri[12], vecL2OExtri[13], vecL2OExtri[14], vecL2OExtri[15];
-            ROS_WARN_STREAM("Reveived transformation_matrix mid -> ouster: \n" << _mid_ouster_tf_init );
+            if(!ros::param::get("mm_PoseEstimation/Extrinsic_TM22O",vecL22OExtri )){
+
+                vecL22OExtri = {0.351089, 0.344676, -0.870606, -0.35431,
+                                -0.710375, 0.703766, -0.00784904, -0.00602132,
+                                0.610049, 0.621264, 0.491873, 0.269782,
+                                0, 0, 0, 1}; // 后mid360对ouster
+
+                ROS_WARN_STREAM("Extrinsic_Tlb unavailable ! Using default param");
+            }     
+            // if(!ros::param::get("mm_PoseEstimation/Extrinsic_TL22O",vecL22OExtri )){
+
+            //     vecL22OExtri = {   -0.49789,  0.00156287,   -0.867213,   -0.392622,
+            //     -0.00892625,   -0.999954,  0.00332278, -0.00168803,
+            //     -0.867169,  0.00939575,    0.497882,   0.185,
+            //     0,           0,           0,           1}; // 后mid360对ouster
+
+            //     ROS_WARN_STREAM("Extrinsic_Tlb unavailable ! Using default param");
+            // }
+            if(!ros::param::get("mm_PoseEstimation/Extrinsic_TM32O",vecL32OExtri )){
+
+                vecL32OExtri = {-0.707, 0.707,  0.0,   -0.0,
+                                -0.707, -0.707,  0.0,   0.0,
+                                0.0, 0.0,  1.0,   0.347,
+                                0.0, 0.0,  0.0,   1.0}; // 后mid360对ouster
+
+                ROS_WARN_STREAM("Extrinsic_Tlb unavailable ! Using default param");
+            }
+            Eigen::Matrix3f rotate_axia;
+            Eigen::Matrix3f rotate_init = Eigen::Matrix3f::Identity();
+            _mid1_ouster_tf_init = Eigen::Matrix4f::Identity();
+            _mid2_ouster_tf_init = Eigen::Matrix4f::Identity();
+            _mid3_ouster_tf_init = Eigen::Matrix4f::Identity();
+
+            // mid360-1
+            rotate_axia = Eigen::AngleAxisf(PI * 4 / 9, Eigen::Vector3f::UnitY()).toRotationMatrix();
+            rotate_init = rotate_axia;
+            rotate_axia = Eigen::AngleAxisf(-PI / 4, Eigen::Vector3f::UnitZ()).toRotationMatrix();
+            rotate_init = rotate_init * rotate_axia;
+            _mid1_ouster_tf_init.block(0,0,3,3) = rotate_init;
+            _mid1_ouster_tf_init.block(0,3,3,1) << 0.223312, 0.00225066, 0.120166;
+            // mid360-2
+            rotate_axia = Eigen::AngleAxisf(-PI / 3, Eigen::Vector3f::UnitY()).toRotationMatrix();
+            rotate_init = rotate_axia;
+            rotate_axia = Eigen::AngleAxisf(-PI / 4, Eigen::Vector3f::UnitZ()).toRotationMatrix();
+            rotate_init = rotate_init * rotate_axia;
+            _mid2_ouster_tf_init.block(0,0,3,3) = rotate_init;
+            _mid2_ouster_tf_init.block(0,3,3,1) << -0.35431, -0.00602132, 0.269782;
+            // mid360-3
+            rotate_axia = Eigen::AngleAxisf(0, Eigen::Vector3f::UnitY()).toRotationMatrix();
+            rotate_init = rotate_axia;
+            rotate_axia = Eigen::AngleAxisf(PI / 4, Eigen::Vector3f::UnitZ()).toRotationMatrix();
+            rotate_init = rotate_init * rotate_axia;
+            _mid3_ouster_tf_init.block(0,0,3,3) = rotate_init;
+            _mid3_ouster_tf_init.block(0,3,3,1) << 0.0, 0.0, 0.500;
+
+            // _mid1_ouster_tf_init <<    vecL12OExtri[0], vecL12OExtri[1], vecL12OExtri[2], vecL12OExtri[3],
+            //         vecL12OExtri[4], vecL12OExtri[5], vecL12OExtri[6], vecL12OExtri[7],
+            //         vecL12OExtri[8], vecL12OExtri[9], vecL12OExtri[10], vecL12OExtri[11],
+            //         vecL12OExtri[12], vecL12OExtri[13], vecL12OExtri[14], vecL12OExtri[15];
+            // _mid2_ouster_tf_init <<    vecL22OExtri[0], vecL22OExtri[1], vecL22OExtri[2], vecL22OExtri[3],
+            //         vecL22OExtri[4], vecL22OExtri[5], vecL22OExtri[6], vecL22OExtri[7],
+            //         vecL22OExtri[8], vecL22OExtri[9], vecL22OExtri[10], vecL22OExtri[11],
+            //         vecL22OExtri[12], vecL22OExtri[13], vecL22OExtri[14], vecL22OExtri[15];
+            // _mid3_ouster_tf_init <<    vecL32OExtri[0], vecL32OExtri[1], vecL32OExtri[2], vecL32OExtri[3],
+            //         vecL32OExtri[4], vecL32OExtri[5], vecL32OExtri[6], vecL32OExtri[7],
+            //         vecL32OExtri[8], vecL32OExtri[9], vecL32OExtri[10], vecL32OExtri[11],
+            //         vecL32OExtri[12], vecL32OExtri[13], vecL32OExtri[14], vecL32OExtri[15];
+
+            ROS_WARN_STREAM("Reveived transformation_matrix mid1 -> base: \n" << _mid1_ouster_tf_init );
+            ROS_WARN_STREAM("Reveived transformation_matrix mid2 -> base: \n" << _mid2_ouster_tf_init );
+            ROS_WARN_STREAM("Reveived transformation_matrix mid3 -> base: \n" << _mid3_ouster_tf_init );
+            _mid2_mid1_tf_init = _mid1_ouster_tf_init.inverse() * _mid2_ouster_tf_init;
+            ROS_WARN_STREAM("Reveived transformation_matrix mid2 -> mid1: \n" << _mid2_mid1_tf_init );
             if(_use_given_timeoffset)
             {
                 ROS_INFO_STREAM("Given time offset " << given_timeoffset);
@@ -265,25 +349,81 @@ class LidarsParamEstimator{
 
                     Eigen::Translation3f init_trans(0.0,0.0,0.0);
                     Eigen::Matrix4f init_tf = (init_trans * init_rot_z * init_rot_y * init_rot_x).matrix();
-                    Eigen::Matrix4f hori_tf_matrix;
+                    Eigen::Matrix4f mid12ouster_tf_matrix, mid22ouster_tf_matrix, mid22mid1_tg_matrix;
                     // pcl::transformPointCloud (full_cloud , cloud_out, transformation_matrix);
                     ROS_INFO("\n\n\n  Calibrate Horizon ...");
 
-                    pcl::PointCloud<PointType> hori_temp;
-                    pcl::transformPointCloud (_hori_igcloud, hori_temp, _mid_ouster_tf_init);
+                    pcl::PointCloud<PointType> hori_temp1, hori_temp2, hori_temp3;
 
-                    calibratePCLICP(hori_temp.makeShared(), _ouster_new_cloud.makeShared(), hori_tf_matrix, true);
+
+                    pcl::transformPointCloud (_hori_igcloud, hori_temp1, _mid1_ouster_tf_init);
+                    pcl::transformPointCloud (_hori_igcloud2, hori_temp2, _mid2_ouster_tf_init);
+                    pcl::transformPointCloud (_hori_igcloud3, hori_temp3, _mid3_ouster_tf_init);
+
+                    pcl::copyPointCloud(hori_temp3, _ouster_new_cloud);
+
+                    calibratePCLICP(hori_temp1.makeShared(), _ouster_new_cloud.makeShared(), mid12ouster_tf_matrix, true, "mid12ouster");
+                    calibratePCLICP(hori_temp2.makeShared(), _ouster_new_cloud.makeShared(), mid22ouster_tf_matrix, true, "mid22ouster");
+                    calibratePCLICP(hori_temp2.makeShared(), hori_temp1.makeShared(), mid22mid1_tg_matrix, true, "mid22mid1");
+
+
                     // Eigen::Matrix3f rot_matrix = hori_tf_matrix.block(0,0,3,3);
                     // Eigen::Vector3f trans_vector = hori_tf_matrix.block(0,3,3,1);
 
-                    hori_tf_matrix = hori_tf_matrix * _mid_ouster_tf_init;
-                    ROS_WARN_STREAM("transformation_matrix Hori-> Velo: \n"<< hori_tf_matrix);
-                    std::cout << "transformation_matrix Hori-> Velo: \n"<<hori_tf_matrix << std::endl;
-                    Eigen::Matrix3f rot_matrix = hori_tf_matrix.block(0,0,3,3);
-                    Eigen::Vector3f trans_vector = hori_tf_matrix.block(0,3,3,1);
+                    mid12ouster_tf_matrix = mid12ouster_tf_matrix * _mid1_ouster_tf_init;
+                    mid22ouster_tf_matrix = mid22ouster_tf_matrix * _mid2_ouster_tf_init;
+                    mid22mid1_tg_matrix = _mid1_ouster_tf_init.inverse() * mid22mid1_tg_matrix * _mid2_ouster_tf_init;
+
+                    pcl::transformPointCloud (_hori_igcloud, hori_temp1, mid12ouster_tf_matrix);
+                    pcl::transformPointCloud (_hori_igcloud2, hori_temp2, mid22ouster_tf_matrix);
+                    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloudALL (new pcl::PointCloud<pcl::PointXYZRGB>(_ouster_new_cloud.size() + hori_temp1.size() + hori_temp2.size(),1));
+
+                    // Fill in the CloudIn data
+                    for (int i = 0; i < _ouster_new_cloud.size(); i++)
+                    {
+                        pcl::PointXYZRGB pointin;
+                        pointin.x = (_ouster_new_cloud)[i].x;
+                        pointin.y = (_ouster_new_cloud)[i].y;
+                        pointin.z = (_ouster_new_cloud)[i].z;
+                        pointin.r = 255;
+                        pointin.g = 0;
+                        pointin.b = 0;
+                        (*cloudALL)[i] = pointin;
+                    }
+                    for (int i = 0; i < hori_temp1.size(); i++)
+                    {
+                        pcl::PointXYZRGB pointout;
+                        pointout.x = (hori_temp1)[i].x;
+                        pointout.y = (hori_temp1)[i].y;
+                        pointout.z = (hori_temp1)[i].z;
+                        pointout.r = 0;
+                        pointout.g = 255;
+                        pointout.b = 0;
+                        (*cloudALL)[i+_ouster_new_cloud.size()] = pointout;
+                    }
+                    for (int i = 0; i < hori_temp2.size(); i++)
+                    {
+                        pcl::PointXYZRGB pointout;
+                        pointout.x = (hori_temp2)[i].x;
+                        pointout.y = (hori_temp2)[i].y;
+                        pointout.z = (hori_temp2)[i].z;
+                        pointout.r = 0;
+                        pointout.g = 0;
+                        pointout.b = 255;
+                        (*cloudALL)[i+_ouster_new_cloud.size() + hori_temp1.size()] = pointout;
+                    }
+                    pcl::io::savePCDFile<pcl::PointXYZRGB> ("/home/jcwang/dataset/icp_ICP_all.pcd", *cloudALL);
+                    ROS_WARN_STREAM("transformation_matrix Mid1-> Mid3: \n"<< _mid3_ouster_tf_init.inverse() * mid12ouster_tf_matrix);
+                    ROS_WARN_STREAM("transformation_matrix Mid2-> Mid3: \n"<< _mid3_ouster_tf_init.inverse() * mid22ouster_tf_matrix);
+                    ROS_WARN_STREAM("transformation_matrix Mid1-> base: \n"<< mid12ouster_tf_matrix);
+                    ROS_WARN_STREAM("transformation_matrix Mid2-> base: \n"<< mid22ouster_tf_matrix);
+                    ROS_WARN_STREAM("transformation_matrix Mid2-> Mid1: \n"<< mid22mid1_tg_matrix);
+                    std::cout << "transformation_matrix Hori-> Velo: \n"<<mid12ouster_tf_matrix << std::endl;
+                    Eigen::Matrix3f rot_matrix = mid12ouster_tf_matrix.block(0,0,3,3);
+                    Eigen::Vector3f trans_vector = mid12ouster_tf_matrix.block(0,3,3,1);
                     _velo_hori_tf_matrix.block(0,0,3,3) = rot_matrix.transpose();
-                    _velo_hori_tf_matrix.block(0,3,3,1) =  hori_tf_matrix.block(0,3,3,1) * -1;
-                    _velo_hori_tf_matrix.block(3,0,1,4) = hori_tf_matrix.block(3,0,1,4);
+                    _velo_hori_tf_matrix.block(0,3,3,1) =  mid12ouster_tf_matrix.block(0,3,3,1) * -1;
+                    _velo_hori_tf_matrix.block(3,0,1,4) = mid12ouster_tf_matrix.block(3,0,1,4);
                     std::cout << "transformation_matrix Velo-> Hori: \n"<<_velo_hori_tf_matrix << std::endl;
 
                     // std::cout << "hori -> base_link " << trans_vector.transpose()
@@ -412,6 +552,72 @@ class LidarsParamEstimator{
                     }
 
                 }
+            }
+        }
+
+    /**
+     * @brief subscribe raw pointcloud message from Livox lidar and process the data.
+     * - save the first timestamp of first message to init the timestamp
+     * - Undistort pointcloud based on rotation from IMU
+     * - If TF is not initlized,  Push the current undistorted message and yaw to queue;
+     * - If TF is not intilized,  align two pointclouds with ICP after integrating enough frames
+     * - If TF has been initized, publish aligned cloud in Horizon frame-id
+     */
+    void hori_cloud_handler3(const livox_ros_driver::CustomMsgConstPtr& livox_msg_in)
+    {
+        auto tick = std::chrono::high_resolution_clock::now();
+        if(!_first_velo_reveived) _first_velo_reveived = true; // to make sure we have velo cloud to match
+
+        if(_first_hori3){
+            _hori_start_stamp3 = livox_msg_in->timebase; // global hori message time_base
+            ROS_INFO_STREAM("Update _hori_start_stamp3 :" << _hori_start_stamp3);
+            _first_hori3 = false;
+        }
+
+        livox_ros_driver::CustomMsg livox_msg_in_distort(*livox_msg_in);
+        // RemoveLidarDistortion( livox_msg_in, livox_msg_in_distort);
+        // ###$ integrate more msgs to get extrinsic transform
+        pcl::PointCloud<pcl::PointXYZI>::Ptr pointCloudIn(new  pcl::PointCloud<pcl::PointXYZI>);
+        livoxToPCLCloud(livox_msg_in_distort, *pointCloudIn, _cut_raw_message_pieces);
+        if(_hori_itegrate_frames3 > 0 && !_hori_tf_initd )
+        {
+            _hori_igcloud3 += *pointCloudIn;
+            _hori_itegrate_frames3--;
+            ROS_INFO_STREAM("hori cloud integrating: " << _hori_itegrate_frames3);
+            return;
+        }
+    }
+
+        /**
+         * @brief subscribe raw pointcloud message from Livox lidar and process the data.
+         * - save the first timestamp of first message to init the timestamp
+         * - Undistort pointcloud based on rotation from IMU
+         * - If TF is not initlized,  Push the current undistorted message and yaw to queue;
+         * - If TF is not intilized,  align two pointclouds with ICP after integrating enough frames
+         * - If TF has been initized, publish aligned cloud in Horizon frame-id
+         */
+        void hori_cloud_handler2(const livox_ros_driver::CustomMsgConstPtr& livox_msg_in)
+        {
+            auto tick = std::chrono::high_resolution_clock::now();
+            if(!_first_velo_reveived) return; // to make sure we have velo cloud to match
+
+            if(_first_hori2){
+                _hori_start_stamp2 = livox_msg_in->timebase; // global hori message time_base
+                ROS_INFO_STREAM("Update _hori_start_stamp2 :" << _hori_start_stamp2);
+                _first_hori2 = false;
+            }
+
+            livox_ros_driver::CustomMsg livox_msg_in_distort(*livox_msg_in);
+            // RemoveLidarDistortion( livox_msg_in, livox_msg_in_distort);
+            // ###$ integrate more msgs to get extrinsic transform
+            pcl::PointCloud<pcl::PointXYZI>::Ptr pointCloudIn(new  pcl::PointCloud<pcl::PointXYZI>);
+            livoxToPCLCloud(livox_msg_in_distort, *pointCloudIn, _cut_raw_message_pieces);
+            if(_hori_itegrate_frames2 > 0 && !_hori_tf_initd )
+            {
+                _hori_igcloud2 += *pointCloudIn;
+                _hori_itegrate_frames2--;
+                ROS_INFO_STREAM("hori cloud integrating: " << _hori_itegrate_frames2);
+                return;
             }
         }
 

@@ -491,7 +491,7 @@ void livoxToPCLCloud( livox_ros_driver::CustomMsg& livox_msg_in, pcl::PointCloud
 }
 
 void calibratePCLICP(pcl::PointCloud<PointType>::Ptr source_cloud,
-pcl::PointCloud<PointType>::Ptr target_cloud, Eigen::Matrix4f &tf_marix, bool save_pcd =true)
+pcl::PointCloud<PointType>::Ptr target_cloud, Eigen::Matrix4f &tf_marix, bool save_pcd =true, std::string hw = "mid2ouster")
 {
     std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
     std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
@@ -595,9 +595,9 @@ pcl::PointCloud<PointType>::Ptr target_cloud, Eigen::Matrix4f &tf_marix, bool sa
         for (int i = 0; i < cloudSrc->size(); i++)
         {
             pcl::PointXYZRGB &pointin = (*cloudSrcRGB)[i];
-            pointin.x = (input_transformed)[i].x;
-            pointin.y = (input_transformed)[i].y;
-            pointin.z = (input_transformed)[i].z;
+            pointin.x = (*cloudSrc)[i].x;
+            pointin.y = (*cloudSrc)[i].y;
+            pointin.z = (*cloudSrc)[i].z;
             pointin.r = 255;
             pointin.g = 0;
             pointin.b = 0;
@@ -614,7 +614,7 @@ pcl::PointCloud<PointType>::Ptr target_cloud, Eigen::Matrix4f &tf_marix, bool sa
             pointout.b = 255;
             (*cloudALL)[i+cloudSrc->size()] = pointout;
         } 
-        pcl::io::savePCDFile<pcl::PointXYZRGB> ("/home/jcwang/dataset/icp_ICP.pcd", *cloudALL);
+        pcl::io::savePCDFile<pcl::PointXYZRGB> ("/home/jcwang/dataset/icp_ICP_" + hw + ".pcd", *cloudALL);
     }
 } 
 

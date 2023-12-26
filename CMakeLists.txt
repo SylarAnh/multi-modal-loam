@@ -9,7 +9,6 @@ SET(PYTHON_EXECUTABLE /usr/bin/python3)
 
 
 find_package(catkin REQUIRED COMPONENTS
-  	     message_generation
   	     geometry_msgs
   	     nav_msgs
   	     sensor_msgs
@@ -35,7 +34,6 @@ find_package(SuiteSparse REQUIRED)
 add_message_files(
 	DIRECTORY msg
 	FILES
-	union_cloud.msg
 )
 
 include_directories(
